@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PayBridge.Common/PayBridge.Common.csproj" />
+    <Project Path="src/PayBridge.FraudStub/PayBridge.FraudStub.csproj" />
+    <Project Path="src/PayBridge.PaymentApi/PayBridge.PaymentApi.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PayBridge.PaymentApi.Tests/PayBridge.PaymentApi.Tests.csproj" />
+  </Folder>
+</Solution>

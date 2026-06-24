@@ -1,0 +1,6 @@
+@PayBridge.FraudStub_HostAddress = http://localhost:5237
+
+GET {{PayBridge.FraudStub_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
