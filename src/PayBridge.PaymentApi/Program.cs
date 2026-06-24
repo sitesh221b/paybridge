@@ -1,23 +1,52 @@
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// --- Service identity for telemetry ---
+const string ServiceName = "payment-api";
+const string ServiceVersion = "0.1.0";
 
-builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// --- OpenTelemetry: traces + metrics + logs ---
+var otel = builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService(ServiceName, serviceVersion: ServiceVersion));
+
+otel.WithTracing(t => t
+    .AddAspNetCoreInstrumentation()
+    .AddHttpClientInstrumentation()
+    .AddOtlpExporter());
+
+otel.WithMetrics(m => m
+    .AddAspNetCoreInstrumentation()
+    .AddHttpClientInstrumentation()
+    .AddRuntimeInstrumentation()
+    .AddOtlpExporter());
+
+// Logs are wired through the ILogger pipeline
+builder.Logging.AddOpenTelemetry(o =>
+{
+    o.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: ServiceVersion));
+    o.IncludeScopes = true;
+    o.IncludeFormattedMessage = true;
+    o.AddOtlpExporter();
+});
+
+// --- ASP.NET Core services ---
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(
+            new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
+builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
-
-app.UseHttpsRedirection();
-
-app.UseAuthorization();
-
 app.MapControllers();
+
+// Simple liveness probe — we'll formalize health checks later
+app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
 
 app.Run();

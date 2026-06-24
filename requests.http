@@ -1,0 +1,16 @@
+### Create a payment - happy path
+POST http://localhost:5001/api/payments
+Content-Type: application/json
+
+{
+  "merchantId": "merchant_acme",
+  "idempotencyKey": "key-001",
+  "amount": 49.99,
+  "currency": "USD",
+  "customerEmail": "[email protected]",
+  "method": "CreditCard",
+  "metadata": null
+}
+
+### Health check
+GET http://localhost:5001/health/live
