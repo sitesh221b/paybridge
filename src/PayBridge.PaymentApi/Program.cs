@@ -5,6 +5,7 @@ using OpenTelemetry.Trace;
 using Microsoft.EntityFrameworkCore;
 using PayBridge.PaymentApi.Data;
 using StackExchange.Redis;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -72,11 +73,68 @@ builder.Services.AddHttpClient("fraud", client =>
     client.Timeout = TimeSpan.FromSeconds(5);
 });
 
+// === Health checks ===
+builder.Services.AddHealthChecks()
+    // Postgres = critical: if it's down, we cannot fulfil the contract
+    .AddNpgSql(
+        connectionString,
+        name: "postgres",
+        failureStatus: HealthStatus.Unhealthy,
+        tags: new[] { "ready", "critical" })
+    // Redis = non-critical: we fall back to DB; service remains usable
+    .AddRedis(
+        redisConnection,
+        name: "redis",
+        failureStatus: HealthStatus.Degraded,
+        tags: new[] { "ready" })
+    // Downstream fraud check = non-critical for liveness; track for readiness signal
+    .AddUrlGroup(
+        new Uri($"{fraudBaseUrl}/health/live"),
+        name: "fraud-stub",
+        failureStatus: HealthStatus.Degraded,
+        tags: new[] { "ready" });
+
 var app = builder.Build();
 
 app.MapControllers();
+
+// Liveness: am I alive? Don't depend on anything external —
+// a transient DB blip should not cause a restart loop.
+app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = _ => false,  // run no checks, just confirm the process responds
+    ResponseWriter = WriteHealthJson
+});
+
+// Readiness: am I ready to serve traffic? Critical deps must pass.
+app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = WriteHealthJson
+});
 
 // Simple liveness probe — we'll formalize health checks later
 app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
 
 app.Run();
+
+static Task WriteHealthJson(HttpContext ctx, HealthReport report)
+{
+    ctx.Response.ContentType = "application/json";
+    var payload = new
+    {
+        status = report.Status.ToString(),
+        totalDuration = report.TotalDuration.TotalMilliseconds,
+        results = report.Entries.ToDictionary(
+            e => e.Key,
+            e => new
+            {
+                status = e.Value.Status.ToString(),
+                durationMs = e.Value.Duration.TotalMilliseconds,
+                description = e.Value.Description,
+                tags = e.Value.Tags,
+                exception = e.Value.Exception?.Message
+            })
+    };
+    return ctx.Response.WriteAsJsonAsync(payload);
+}

@@ -1,6 +1,9 @@
 ### Health check
 GET http://localhost:5001/health/live
 
+### Readiness — checks critical dependencies
+GET http://localhost:5001/health/ready
+
 
 ### Create a payment - happy path
 POST http://localhost:5001/api/payments
@@ -15,9 +18,6 @@ Content-Type: application/json
   "method": "CreditCard",
   "metadata": null
 }
-
-### Health check
-GET http://localhost:5002/health/live
 
 ### Direct fraud check (just to verify it works)
 POST http://localhost:5002/api/fraud/check
