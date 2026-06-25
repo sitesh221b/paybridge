@@ -6,6 +6,8 @@ using Microsoft.EntityFrameworkCore;
 using PayBridge.PaymentApi.Data;
 using StackExchange.Redis;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Http.Resilience;
+using Polly;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,6 +28,7 @@ otel.WithTracing(t => t
 
 otel.WithMetrics(m => m
     .AddMeter(PayBridge.PaymentApi.Observability.PaymentMetrics.MeterName)
+    .AddMeter("Polly")
     .AddAspNetCoreInstrumentation()
     .AddHttpClientInstrumentation()
     .AddRuntimeInstrumentation()
@@ -70,7 +73,55 @@ var fraudBaseUrl = builder.Configuration["Services:FraudStub:BaseUrl"]
 builder.Services.AddHttpClient("fraud", client =>
 {
     client.BaseAddress = new Uri(fraudBaseUrl);
-    client.Timeout = TimeSpan.FromSeconds(5);
+    // Outer timeout — bound on the total operation including retries
+    client.Timeout = TimeSpan.FromSeconds(10);
+})
+.AddResilienceHandler("fraud-pipeline", (pipeline, context) =>
+{
+    // Resolve dependencies once via the handler context's ServiceProvider,
+    // then capture them in the callback closures below.
+    var metrics = context.ServiceProvider
+        .GetRequiredService<PayBridge.PaymentApi.Observability.PaymentMetrics>();
+    var logger = context.ServiceProvider
+        .GetRequiredService<ILoggerFactory>()
+        .CreateLogger("FraudResilience");
+
+    pipeline
+        // Per-attempt timeout: a single try cannot exceed 2s
+        .AddTimeout(TimeSpan.FromSeconds(2))
+        // Retry transient failures with exponential backoff + jitter
+        .AddRetry(new HttpRetryStrategyOptions
+        {
+            MaxRetryAttempts = 3,
+            BackoffType = DelayBackoffType.Exponential,
+            UseJitter = true,
+            Delay = TimeSpan.FromMilliseconds(200)
+        })
+        // Circuit breaker: after a burst of failures, fail fast for a cooldown
+        .AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
+        {
+            FailureRatio = 0.5,
+            SamplingDuration = TimeSpan.FromSeconds(10),
+            MinimumThroughput = 5,
+            BreakDuration = TimeSpan.FromSeconds(15),
+            OnOpened = args =>
+            {
+                metrics.RecordBreakerEvent("opened");
+                logger.LogWarning("Fraud circuit breaker OPENED");
+                return ValueTask.CompletedTask;
+            },
+            OnClosed = args =>
+            {
+                metrics.RecordBreakerEvent("closed");
+                logger.LogInformation("Fraud circuit breaker CLOSED — service recovered");
+                return ValueTask.CompletedTask;
+            },
+            OnHalfOpened = args =>
+            {
+                metrics.RecordBreakerEvent("half_opened");
+                return ValueTask.CompletedTask;
+            }
+        });
 });
 
 // === Health checks ===

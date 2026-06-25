@@ -11,7 +11,7 @@ Content-Type: application/json
 
 {
   "merchantId": "merchant_acme",
-  "idempotencyKey": "key-004",
+  "idempotencyKey": "key-019",
   "amount": 49.99,
   "currency": "USD",
   "customerEmail": "[email protected]",

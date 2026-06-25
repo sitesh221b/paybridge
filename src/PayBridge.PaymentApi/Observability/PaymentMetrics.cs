@@ -18,6 +18,7 @@ public class PaymentMetrics
     private readonly Counter<long> _fraudOutcomes;
     private readonly Counter<long> _idempotencyHits;
     private readonly UpDownCounter<long> _inFlightPayments;
+    private readonly Counter<long> _breakerEvents;
 
     public PaymentMetrics(IMeterFactory meterFactory)
     {
@@ -47,6 +48,11 @@ public class PaymentMetrics
             "paybridge.payments.in_flight",
             unit: "{payment}",
             description: "Currently-processing payments");
+
+        _breakerEvents = meter.CreateCounter<long>(
+            "paybridge.resilience.breaker_events",
+            unit: "{event}",
+            description: "Circuit breaker state transitions");
     }
 
     public void RecordPayment(PaymentStatus status, PaymentMethod method, string currency, double durationMs)
@@ -83,5 +89,10 @@ public class PaymentMetrics
         private readonly UpDownCounter<long> _counter;
         public InFlightScope(UpDownCounter<long> counter) => _counter = counter;
         public void Dispose() => _counter.Add(-1);
+    }
+
+    public void RecordBreakerEvent(string transition)  // "opened", "closed", "half_opened"
+    {
+        _breakerEvents.Add(1, new KeyValuePair<string, object?>("transition", transition));
     }
 }
