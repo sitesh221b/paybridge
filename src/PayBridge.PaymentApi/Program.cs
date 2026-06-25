@@ -24,6 +24,7 @@ otel.WithTracing(t => t
     .AddOtlpExporter());
 
 otel.WithMetrics(m => m
+    .AddMeter(PayBridge.PaymentApi.Observability.PaymentMetrics.MeterName)
     .AddAspNetCoreInstrumentation()
     .AddHttpClientInstrumentation()
     .AddRuntimeInstrumentation()
@@ -37,6 +38,8 @@ builder.Logging.AddOpenTelemetry(o =>
     o.IncludeFormattedMessage = true;
     o.AddOtlpExporter();
 });
+
+builder.Services.AddSingleton<PayBridge.PaymentApi.Observability.PaymentMetrics>();
 
 // --- ASP.NET Core services ---
 builder.Services.AddControllers()

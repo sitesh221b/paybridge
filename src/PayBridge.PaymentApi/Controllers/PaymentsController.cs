@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using PayBridge.PaymentApi.Observability;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PayBridge.Common.Contracts;
@@ -16,17 +18,20 @@ public class PaymentsController : ControllerBase
     private readonly IConnectionMultiplexer _redis;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<PaymentsController> _logger;
+    private readonly PaymentMetrics _metrics;
 
     public PaymentsController(
         PaymentDbContext db,
         IConnectionMultiplexer redis,
         IHttpClientFactory httpClientFactory,
-        ILogger<PaymentsController> logger)
+        ILogger<PaymentsController> logger,
+        PaymentMetrics metrics)
     {
         _db = db;
         _redis = redis;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _metrics = metrics;
     }
 
     [HttpPost]
@@ -41,6 +46,9 @@ public class PaymentsController : ControllerBase
         if (request.Amount <= 0)
             return BadRequest(new { error = "amount must be positive" });
 
+        var stopwatch = Stopwatch.StartNew();
+        using var _ = _metrics.TrackInFlight();
+
         // === Idempotency: Redis fast path ===
         var cache = _redis.GetDatabase();
         var idempotencyCacheKey = $"idem:{request.MerchantId}:{request.IdempotencyKey}";
@@ -54,7 +62,11 @@ public class PaymentsController : ControllerBase
 
             var existing = await _db.Payments.FindAsync(new object[] { cachedId }, ct);
             if (existing is not null)
+            {
+                _metrics.RecordIdempotencyReplay("cache");
+                _metrics.RecordPayment(existing.Status, existing.Method, existing.Currency, stopwatch.Elapsed.TotalMilliseconds);
                 return Ok(ToResponse(existing));
+            }
         }
 
         // === Idempotency: durable check via DB ===
@@ -68,6 +80,8 @@ public class PaymentsController : ControllerBase
         {
             // Repopulate cache for next time
             await cache.StringSetAsync(idempotencyCacheKey, dbExisting.Id.ToString(), IdempotencyTtl);
+            _metrics.RecordIdempotencyReplay("db");
+            _metrics.RecordPayment(dbExisting.Status, dbExisting.Method, dbExisting.Currency, stopwatch.Elapsed.TotalMilliseconds);
             return Ok(ToResponse(dbExisting));
         }
 
@@ -105,6 +119,8 @@ public class PaymentsController : ControllerBase
                       && p.IdempotencyKey == request.IdempotencyKey, ct);
 
             await cache.StringSetAsync(idempotencyCacheKey, winner.Id.ToString(), IdempotencyTtl);
+            _metrics.RecordIdempotencyReplay("db");
+            _metrics.RecordPayment(winner.Status, winner.Method, winner.Currency, stopwatch.Elapsed.TotalMilliseconds);
             return Ok(ToResponse(winner));
         }
 
@@ -132,6 +148,7 @@ public class PaymentsController : ControllerBase
             payment.FailureReason = "fraud_service_unavailable";
             payment.CompletedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
+            _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency, stopwatch.Elapsed.TotalMilliseconds);
             return StatusCode(503, ToResponse(payment));
         }
 
@@ -145,13 +162,16 @@ public class PaymentsController : ControllerBase
             _logger.LogWarning(
                 "Payment rejected by fraud. PaymentId={PaymentId} RiskScore={RiskScore} Reason={Reason}",
                 payment.Id, fraudResp?.RiskScore, payment.FailureReason);
-
+            _metrics.RecordFraudOutcome(approved: false);
+            _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency, stopwatch.Elapsed.TotalMilliseconds);
             return Ok(ToResponse(payment));
         }
 
         payment.Status = PaymentStatus.Submitted;
         await _db.SaveChangesAsync(ct);
 
+        _metrics.RecordFraudOutcome(approved: true);
+        _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency, stopwatch.Elapsed.TotalMilliseconds);
         return Accepted(ToResponse(payment));
     }
 
