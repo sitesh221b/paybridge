@@ -7,17 +7,22 @@ namespace PayBridge.PaymentApi.Controllers;
 [Route("api/[controller]")]
 public class PaymentsController : ControllerBase
 {
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<PaymentsController> _logger;
 
-    public PaymentsController(ILogger<PaymentsController> logger)
+    public PaymentsController(
+        IHttpClientFactory httpClientFactory,
+        ILogger<PaymentsController> logger)
     {
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
     [HttpPost]
-    public IActionResult Create([FromBody] CreatePaymentRequest request)
+    public async Task<IActionResult> Create(
+        [FromBody] CreatePaymentRequest request,
+        CancellationToken ct)
     {
-        // Basic validation
         if (string.IsNullOrWhiteSpace(request.MerchantId))
             return BadRequest(new { error = "merchantId is required" });
         if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
@@ -28,15 +33,47 @@ public class PaymentsController : ControllerBase
         var paymentId = Guid.NewGuid();
 
         _logger.LogInformation(
-            "Payment created. PaymentId={PaymentId} MerchantId={MerchantId} Amount={Amount} Currency={Currency}",
+            "Payment received. PaymentId={PaymentId} MerchantId={MerchantId} Amount={Amount} Currency={Currency}",
             paymentId, request.MerchantId, request.Amount, request.Currency);
 
-        var response = new CreatePaymentResponse(
-            PaymentId: paymentId,
-            Status: PaymentStatus.Created,
-            CreatedAt: DateTime.UtcNow
-        );
+        // === Fraud check (cross-service call over HTTP) ===
+        var fraudClient = _httpClientFactory.CreateClient("fraud");
+        var fraudReq = new FraudCheckRequest(
+            paymentId,
+            request.MerchantId,
+            request.Amount,
+            request.Currency,
+            request.CustomerEmail,
+            request.Method);
 
-        return Accepted(response);
+        FraudCheckResponse? fraudResp;
+        try
+        {
+            var httpResp = await fraudClient.PostAsJsonAsync("/api/fraud/check", fraudReq, ct);
+            httpResp.EnsureSuccessStatusCode();
+            fraudResp = await httpResp.Content.ReadFromJsonAsync<FraudCheckResponse>(cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Fraud service call failed. PaymentId={PaymentId}", paymentId);
+            return StatusCode(503, new { error = "fraud service unavailable", paymentId });
+        }
+
+        if (fraudResp is null)
+            return StatusCode(502, new { error = "invalid fraud response", paymentId });
+
+        if (!fraudResp.Approved)
+        {
+            _logger.LogWarning(
+                "Payment rejected by fraud. PaymentId={PaymentId} RiskScore={RiskScore} Reason={Reason}",
+                paymentId, fraudResp.RiskScore, fraudResp.Reason);
+
+            return Ok(new CreatePaymentResponse(
+                paymentId, PaymentStatus.Failed, DateTime.UtcNow));
+        }
+
+        return Accepted(new CreatePaymentResponse(
+            paymentId, PaymentStatus.Submitted, DateTime.UtcNow));
     }
 }

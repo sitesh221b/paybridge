@@ -1,3 +1,7 @@
+### Health check
+GET http://localhost:5001/health/live
+
+
 ### Create a payment - happy path
 POST http://localhost:5001/api/payments
 Content-Type: application/json
@@ -13,4 +17,17 @@ Content-Type: application/json
 }
 
 ### Health check
-GET http://localhost:5001/health/live
+GET http://localhost:5002/health/live
+
+### Direct fraud check (just to verify it works)
+POST http://localhost:5002/api/fraud/check
+Content-Type: application/json
+
+{
+  "paymentId": "11111111-1111-1111-1111-111111111111",
+  "merchantId": "merchant_acme",
+  "amount": 49.99,
+  "currency": "USD",
+  "customerEmail": "[email protected]",
+  "method": "CreditCard"
+}

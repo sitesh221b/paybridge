@@ -42,6 +42,16 @@ builder.Services.AddControllers()
     });
 builder.Services.AddEndpointsApiExplorer();
 
+// Configuration: where to find downstream services
+var fraudBaseUrl = builder.Configuration["Services:FraudStub:BaseUrl"]
+                   ?? "http://localhost:5002";
+
+builder.Services.AddHttpClient("fraud", client =>
+{
+    client.BaseAddress = new Uri(fraudBaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
+
 var app = builder.Build();
 
 app.MapControllers();
