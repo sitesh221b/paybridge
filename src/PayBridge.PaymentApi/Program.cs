@@ -2,6 +2,9 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Microsoft.EntityFrameworkCore;
+using PayBridge.PaymentApi.Data;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +19,8 @@ var otel = builder.Services.AddOpenTelemetry()
 otel.WithTracing(t => t
     .AddAspNetCoreInstrumentation()
     .AddHttpClientInstrumentation()
+    .AddEntityFrameworkCoreInstrumentation()
+    .AddRedisInstrumentation()
     .AddOtlpExporter());
 
 otel.WithMetrics(m => m
@@ -41,6 +46,18 @@ builder.Services.AddControllers()
             new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
 builder.Services.AddEndpointsApiExplorer();
+
+// === Database (Postgres) ===
+var connectionString = builder.Configuration.GetConnectionString("Postgres")
+    ?? "Host=localhost;Port=5432;Database=paybridge;Username=paybridge;Password=paybridge_dev";
+
+builder.Services.AddDbContext<PaymentDbContext>(opt =>
+    opt.UseNpgsql(connectionString).UseSnakeCaseNamingConvention());
+
+// === Redis ===
+var redisConnection = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
+builder.Services.AddSingleton<IConnectionMultiplexer>(
+    ConnectionMultiplexer.Connect(redisConnection));
 
 // Configuration: where to find downstream services
 var fraudBaseUrl = builder.Configuration["Services:FraudStub:BaseUrl"]
