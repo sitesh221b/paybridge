@@ -167,6 +167,12 @@ app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.Health
 // Simple liveness probe — we'll formalize health checks later
 app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
 
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<PaymentDbContext>();
+    await db.Database.MigrateAsync();
+}
+
 app.Run();
 
 static Task WriteHealthJson(HttpContext ctx, HealthReport report)
