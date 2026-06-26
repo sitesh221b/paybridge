@@ -4,9 +4,6 @@ A multi-service payment orchestrator built to demonstrate production-grade
 observability, distributed tracing across six protocol boundaries, and
 race-proof correctness under async failure modes.
 
-This is a take-home for an SDE2 .NET role. The scope deliberately favors
-depth on the observability and correctness story over breadth.
-
 ---
 
 ## Quick start
@@ -159,48 +156,6 @@ wait 20s, and the breaker closes.
 | `GET /health/ready` | Readiness — "can I serve traffic?" | 200 if all critical dependencies (Postgres, RabbitMQ) are healthy. 200 with `Degraded` if non-critical dependencies fail (Redis falls back to DB). 503 if a critical dependency is down |
 
 Try it: `docker compose stop redis` → `/health/ready` returns 200 with `Degraded`. `docker compose stop postgres` → 503 Unhealthy.
-
----
-
-## Project layout
-
-paybridge/
-
-├── src/
-
-│ ├── PayBridge.PaymentApi/ # Real REST orchestrator
-
-│ ├── PayBridge.FraudStub/ # gRPC stub service
-
-│ ├── PayBridge.ProviderStub/ # HTTP stub + async webhook
-
-│ ├── PayBridge.SettlementConsumer/ # Background worker
-
-│ └── PayBridge.Common/ # Shared DTOs + proto file
-
-├── tests/
-
-│ └── PayBridge.PaymentApi.Tests/ # Integration tests with Testcontainers
-
-├── docs/
-
-│ ├── design.md # SLOs, runbook, PII, cost
-
-│ ├── architecture-flow.png
-
-│ ├── architecture-observability.png
-
-│ └── screenshots/
-
-├── docker/
-
-│ └── otel-collector-config.yaml
-
-├── docker-compose.yml
-
-├── requests.http
-
-└── README.md
 
 ---
 
