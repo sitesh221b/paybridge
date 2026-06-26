@@ -48,6 +48,19 @@ services:
       - "18888:18888"
       - "4317:18889"
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    container_name: paybridge-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./docker/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4319:4317" # OTLP gRPC (external apps could also send here)
+      - "4320:4318" # OTLP HTTP
+    depends_on:
+      aspire-dashboard:
+        condition: service_started
+
   fraud-stub:
     platform: linux/amd64
     build:
@@ -56,12 +69,14 @@ services:
     container_name: paybridge-fraud-stub
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
       - ASPNETCORE_Kestrel__EndpointDefaults__Protocols=Http2
     ports:
       - "5002:8080"
     depends_on:
+      otel-collector:
+        condition: service_started
       aspire-dashboard:
         condition: service_started
 
@@ -73,11 +88,13 @@ services:
     container_name: paybridge-provider-stub
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
     ports:
       - "5003:8080"
     depends_on:
+      otel-collector:
+        condition: service_started
       aspire-dashboard:
         condition: service_started
 
@@ -98,7 +115,7 @@ services:
       - RabbitMq__Port=5672
       - RabbitMq__User=guest
       - RabbitMq__Password=guest
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
     ports:
       - "5001:8080"
@@ -112,6 +129,8 @@ services:
       fraud-stub:
         condition: service_started
       provider-stub:
+        condition: service_started
+      otel-collector:
         condition: service_started
       aspire-dashboard:
         condition: service_started
@@ -129,13 +148,15 @@ services:
       - RabbitMq__Port=5672
       - RabbitMq__User=guest
       - RabbitMq__Password=guest
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
       aspire-dashboard:
         condition: service_started
 

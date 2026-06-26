@@ -1,22 +1,47 @@
-### Health check
-GET http://localhost:5001/health/live
-
-### Readiness — checks critical dependencies
-GET http://localhost:5001/health/ready
-
-### Health check - Provider Stub
-GET http://localhost:5003/health/live
-
-### Create a payment - happy path
+### 1. Happy path — should reach Completed via webhook
 POST http://localhost:5001/api/payments
 Content-Type: application/json
 
 {
   "merchantId": "merchant_acme",
-  "idempotencyKey": "docker-test-002",
+  "idempotencyKey": "demo-happy-001",
   "amount": 49.99,
   "currency": "USD",
   "customerEmail": "[email protected]",
   "method": "CreditCard",
   "metadata": null
 }
+
+### 2. Duplicate idempotency key — should return original payment, no double-processing
+POST http://localhost:5001/api/payments
+Content-Type: application/json
+
+{
+  "merchantId": "merchant_acme",
+  "idempotencyKey": "demo-happy-001",
+  "amount": 49.99,
+  "currency": "USD",
+  "customerEmail": "[email protected]",
+  "method": "CreditCard",
+  "metadata": null
+}
+
+### 3. Different merchant, same key — should be NEW payment (idempotency is per-merchant)
+POST http://localhost:5001/api/payments
+Content-Type: application/json
+
+{
+  "merchantId": "merchant_globex",
+  "idempotencyKey": "demo-happy-001",
+  "amount": 19.99,
+  "currency": "EUR",
+  "customerEmail": "[email protected]",
+  "method": "DebitCard",
+  "metadata": null
+}
+
+### 4. Health — readiness
+GET http://localhost:5001/health/ready
+
+### 5. Health — liveness
+GET http://localhost:5001/health/live

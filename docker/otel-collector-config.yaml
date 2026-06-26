@@ -1,0 +1,60 @@
+# OpenTelemetry Collector configuration.
+#
+# Pipeline shape:
+#   receivers (OTLP from apps) → processors (batch) → exporters (Aspire Dashboard)
+#
+# In production this is where you'd add:
+# - tail_sampling processor (keep errors/slow, sample successes)
+# - attributes processor (scrub PII)
+# - resource processor (add deployment env tags)
+# - multiple exporters (Jaeger, Prometheus, Loki, etc.)
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Batch spans/metrics/logs before exporting — reduces network overhead.
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+  # Memory limit prevents OOM if downstream slows down.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+exporters:
+  # Forward everything to the Aspire Dashboard's OTLP endpoint.
+  otlp/aspire:
+    endpoint: aspire-dashboard:18889
+    tls:
+      insecure: true
+
+  # Debug exporter — comment out in production. Useful while wiring up.
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/aspire]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/aspire]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/aspire]
+
+  telemetry:
+    logs:
+      level: info
