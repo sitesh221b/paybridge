@@ -19,18 +19,3 @@ public record CreatePaymentResponse(
     PaymentStatus Status,
     DateTime CreatedAt
 );
-
-public record FraudCheckRequest(
-    Guid PaymentId,
-    string MerchantId,
-    decimal Amount,
-    string Currency,
-    string CustomerEmail,
-    PaymentMethod Method
-);
-
-public record FraudCheckResponse(
-    bool Approved,
-    double RiskScore,
-    string Reason
-);

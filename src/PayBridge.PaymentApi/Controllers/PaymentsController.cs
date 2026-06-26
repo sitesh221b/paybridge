@@ -16,20 +16,20 @@ public class PaymentsController : ControllerBase
 
     private readonly PaymentDbContext _db;
     private readonly IConnectionMultiplexer _redis;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly PayBridge.Common.Grpc.FraudDetection.FraudDetectionClient _fraudClient;
     private readonly ILogger<PaymentsController> _logger;
     private readonly PaymentMetrics _metrics;
 
     public PaymentsController(
         PaymentDbContext db,
         IConnectionMultiplexer redis,
-        IHttpClientFactory httpClientFactory,
+        PayBridge.Common.Grpc.FraudDetection.FraudDetectionClient fraudClient,
         ILogger<PaymentsController> logger,
         PaymentMetrics metrics)
     {
         _db = db;
         _redis = redis;
-        _httpClientFactory = httpClientFactory;
+        _fraudClient = fraudClient;
         _logger = logger;
         _metrics = metrics;
     }
@@ -131,39 +131,46 @@ public class PaymentsController : ControllerBase
             payment.Id, payment.MerchantId, payment.Amount, payment.Currency);
 
         // === Fraud check ===
-        var fraudClient = _httpClientFactory.CreateClient("fraud");
-        FraudCheckResponse? fraudResp;
+        PayBridge.Common.Grpc.FraudCheckResponse fraudResp;
         try
         {
-            var httpResp = await fraudClient.PostAsJsonAsync("/api/fraud/check",
-                new FraudCheckRequest(payment.Id, payment.MerchantId, payment.Amount,
-                                       payment.Currency, request.CustomerEmail, payment.Method), ct);
-            httpResp.EnsureSuccessStatusCode();
-            fraudResp = await httpResp.Content.ReadFromJsonAsync<FraudCheckResponse>(cancellationToken: ct);
+            fraudResp = await _fraudClient.CheckTransactionAsync(
+                new PayBridge.Common.Grpc.FraudCheckRequest
+                {
+                    PaymentId = payment.Id.ToString(),
+                    MerchantId = payment.MerchantId,
+                    Amount = (double)payment.Amount,
+                    Currency = payment.Currency,
+                    CustomerEmail = request.CustomerEmail,
+                    PaymentMethod = payment.Method.ToString()
+                },
+                cancellationToken: ct);
         }
-        catch (Exception ex)
+        catch (Grpc.Core.RpcException ex)
         {
-            _logger.LogError(ex, "Fraud service call failed. PaymentId={PaymentId}", payment.Id);
+            _logger.LogError(ex, "Fraud service gRPC call failed. PaymentId={PaymentId} Status={Status}",
+                payment.Id, ex.StatusCode);
             payment.Status = PaymentStatus.Failed;
             payment.FailureReason = "fraud_service_unavailable";
             payment.CompletedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
-            _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency, stopwatch.Elapsed.TotalMilliseconds);
+            _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency,
+                stopwatch.Elapsed.TotalMilliseconds);
             return StatusCode(503, ToResponse(payment));
         }
 
-        if (fraudResp is null || !fraudResp.Approved)
+        if (!fraudResp.Approved)
         {
             payment.Status = PaymentStatus.Failed;
-            payment.FailureReason = fraudResp?.Reason ?? "invalid_fraud_response";
+            payment.FailureReason = fraudResp.Reason;
             payment.CompletedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
-
+            _metrics.RecordFraudOutcome(approved: false);
+            _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency,
+                stopwatch.Elapsed.TotalMilliseconds);
             _logger.LogWarning(
                 "Payment rejected by fraud. PaymentId={PaymentId} RiskScore={RiskScore} Reason={Reason}",
-                payment.Id, fraudResp?.RiskScore, payment.FailureReason);
-            _metrics.RecordFraudOutcome(approved: false);
-            _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency, stopwatch.Elapsed.TotalMilliseconds);
+                payment.Id, fraudResp.RiskScore, fraudResp.Reason);
             return Ok(ToResponse(payment));
         }
 

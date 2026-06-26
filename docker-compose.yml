@@ -45,6 +45,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Production
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+      - ASPNETCORE_Kestrel__EndpointDefaults__Protocols=Http2
     ports:
       - "5002:8080"
     depends_on:

@@ -22,6 +22,7 @@ var otel = builder.Services.AddOpenTelemetry()
 otel.WithTracing(t => t
     .AddAspNetCoreInstrumentation()
     .AddHttpClientInstrumentation()
+    .AddGrpcClientInstrumentation()
     .AddEntityFrameworkCoreInstrumentation()
     .AddRedisInstrumentation()
     .AddOtlpExporter());
@@ -70,16 +71,13 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(
 var fraudBaseUrl = builder.Configuration["Services:FraudStub:BaseUrl"]
                    ?? "http://localhost:5002";
 
-builder.Services.AddHttpClient("fraud", client =>
+// === Fraud gRPC client ===
+builder.Services.AddGrpcClient<PayBridge.Common.Grpc.FraudDetection.FraudDetectionClient>(o =>
 {
-    client.BaseAddress = new Uri(fraudBaseUrl);
-    // Outer timeout — bound on the total operation including retries
-    client.Timeout = TimeSpan.FromSeconds(10);
+    o.Address = new Uri(fraudBaseUrl);
 })
 .AddResilienceHandler("fraud-pipeline", (pipeline, context) =>
 {
-    // Resolve dependencies once via the handler context's ServiceProvider,
-    // then capture them in the callback closures below.
     var metrics = context.ServiceProvider
         .GetRequiredService<PayBridge.PaymentApi.Observability.PaymentMetrics>();
     var logger = context.ServiceProvider
@@ -87,9 +85,7 @@ builder.Services.AddHttpClient("fraud", client =>
         .CreateLogger("FraudResilience");
 
     pipeline
-        // Per-attempt timeout: a single try cannot exceed 2s
         .AddTimeout(TimeSpan.FromSeconds(2))
-        // Retry transient failures with exponential backoff + jitter
         .AddRetry(new HttpRetryStrategyOptions
         {
             MaxRetryAttempts = 3,
@@ -97,7 +93,6 @@ builder.Services.AddHttpClient("fraud", client =>
             UseJitter = true,
             Delay = TimeSpan.FromMilliseconds(200)
         })
-        // Circuit breaker: after a burst of failures, fail fast for a cooldown
         .AddCircuitBreaker(new HttpCircuitBreakerStrategyOptions
         {
             FailureRatio = 0.5,

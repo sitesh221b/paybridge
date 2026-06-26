@@ -2,18 +2,18 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using System.Text.Json.Serialization;
+using PayBridge.FraudStub.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 const string ServiceName = "fraud-stub";
-const string ServiceVersion = "0.1.0";
+const string ServiceVersion = "0.2.0";
 
 var otel = builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(ServiceName, serviceVersion: ServiceVersion));
 
 otel.WithTracing(t => t
-    .AddAspNetCoreInstrumentation()
+    .AddAspNetCoreInstrumentation()  // ASP.NET Core hosts gRPC; this captures gRPC server spans
     .AddOtlpExporter());
 
 otel.WithMetrics(m => m
@@ -29,13 +29,12 @@ builder.Logging.AddOpenTelemetry(o =>
     o.AddOtlpExporter();
 });
 
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-    {
-        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
-    });
+// gRPC server registration
+builder.Services.AddGrpc();
 
 var app = builder.Build();
-app.MapControllers();
+
+app.MapGrpcService<FraudDetectionService>();
 app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
+
 app.Run();

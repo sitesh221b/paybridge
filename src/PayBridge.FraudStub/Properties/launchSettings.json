@@ -5,7 +5,8 @@
       "dotnetRunMessages": true,
       "applicationUrl": "http://localhost:5002",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_Kestrel__EndpointDefaults__Protocols": "Http2"
       }
     }
   }
