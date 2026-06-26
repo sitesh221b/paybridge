@@ -4,6 +4,7 @@
     <Project Path="src/PayBridge.FraudStub/PayBridge.FraudStub.csproj" />
     <Project Path="src/PayBridge.PaymentApi/PayBridge.PaymentApi.csproj" />
     <Project Path="src/PayBridge.ProviderStub/PayBridge.ProviderStub.csproj" />
+    <Project Path="src/PayBridge.SettlementConsumer/PayBridge.SettlementConsumer.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/PayBridge.PaymentApi.Tests/PayBridge.PaymentApi.Tests.csproj" />
