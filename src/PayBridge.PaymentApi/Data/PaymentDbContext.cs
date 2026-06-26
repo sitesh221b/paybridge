@@ -19,6 +19,9 @@ public class PaymentDbContext : DbContext
             e.Property(p => p.Amount).HasPrecision(18, 2);
             e.Property(p => p.Status).HasConversion<string>().HasMaxLength(32);
             e.Property(p => p.Method).HasConversion<string>().HasMaxLength(32);
+            e.Property(p => p.ProviderTransactionId).HasMaxLength(64);
+            e.Property(p => p.OriginalTraceId).HasMaxLength(64);
+            e.Property(p => p.OriginalSpanId).HasMaxLength(64);
 
             // THE idempotency guarantee: durable, enforced by Postgres.
             // Cache can be lost; this constraint cannot be bypassed.

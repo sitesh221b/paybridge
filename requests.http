@@ -4,6 +4,8 @@ GET http://localhost:5001/health/live
 ### Readiness — checks critical dependencies
 GET http://localhost:5001/health/ready
 
+### Health check - Provider Stub
+GET http://localhost:5003/health/live
 
 ### Create a payment - happy path
 POST http://localhost:5001/api/payments
@@ -11,7 +13,7 @@ Content-Type: application/json
 
 {
   "merchantId": "merchant_acme",
-  "idempotencyKey": "key-021",
+  "idempotencyKey": "fresh-test-002",
   "amount": 49.99,
   "currency": "USD",
   "customerEmail": "[email protected]",

@@ -14,4 +14,7 @@ public class Payment
     public string? FailureReason { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
+    public string? ProviderTransactionId { get; set; }
+    public string? OriginalTraceId { get; set; }
+    public string? OriginalSpanId { get; set; }
 }

@@ -17,6 +17,8 @@ public class PaymentsController : ControllerBase
     private readonly PaymentDbContext _db;
     private readonly IConnectionMultiplexer _redis;
     private readonly PayBridge.Common.Grpc.FraudDetection.FraudDetectionClient _fraudClient;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<PaymentsController> _logger;
     private readonly PaymentMetrics _metrics;
 
@@ -24,12 +26,16 @@ public class PaymentsController : ControllerBase
         PaymentDbContext db,
         IConnectionMultiplexer redis,
         PayBridge.Common.Grpc.FraudDetection.FraudDetectionClient fraudClient,
+        IHttpClientFactory httpClientFactory,
+        IConfiguration configuration,
         ILogger<PaymentsController> logger,
         PaymentMetrics metrics)
     {
         _db = db;
         _redis = redis;
         _fraudClient = fraudClient;
+        _httpClientFactory = httpClientFactory;
+        _configuration = configuration;
         _logger = logger;
         _metrics = metrics;
     }
@@ -174,11 +180,54 @@ public class PaymentsController : ControllerBase
             return Ok(ToResponse(payment));
         }
 
+        // === Submit to provider (HTTP, async via webhook callback) ===
+        var webhookBaseUrl = _configuration["WebhookBaseUrl"] ?? "http://localhost:5001";
+        var providerClient = _httpClientFactory.CreateClient("provider");
+
+        // Capture the current trace context BEFORE the provider call.
+        // We need it later when the webhook lands as a fresh request with no trace context.
+        // This is what enables trace-relinking via span links in the webhook handler.
+        var currentActivity = System.Diagnostics.Activity.Current;
+        if (currentActivity is not null)
+        {
+            payment.OriginalTraceId = currentActivity.TraceId.ToString();
+            payment.OriginalSpanId = currentActivity.SpanId.ToString();
+        }
+
+        try
+        {
+            var submitReq = new SubmitToProviderRequest(
+                payment.Id,
+                payment.Amount,
+                payment.Currency,
+                payment.Method,
+                WebhookUrl: $"{webhookBaseUrl}/webhooks/provider");
+
+            var providerResp = await providerClient.PostAsJsonAsync("/api/provider/submit", submitReq, ct);
+            providerResp.EnsureSuccessStatusCode();
+            var submission = await providerResp.Content.ReadFromJsonAsync<SubmitToProviderResponse>(cancellationToken: ct);
+
+            payment.ProviderTransactionId = submission?.ProviderTransactionId;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Provider submission failed. PaymentId={PaymentId}", payment.Id);
+            payment.Status = PaymentStatus.Failed;
+            payment.FailureReason = "provider_unavailable";
+            payment.CompletedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency,
+                stopwatch.Elapsed.TotalMilliseconds);
+            return StatusCode(503, ToResponse(payment));
+        }
+
         payment.Status = PaymentStatus.Submitted;
         await _db.SaveChangesAsync(ct);
 
         _metrics.RecordFraudOutcome(approved: true);
-        _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency, stopwatch.Elapsed.TotalMilliseconds);
+        _metrics.RecordPayment(payment.Status, payment.Method, payment.Currency,
+            stopwatch.Elapsed.TotalMilliseconds);
+
         return Accepted(ToResponse(payment));
     }
 

@@ -119,6 +119,15 @@ builder.Services.AddGrpcClient<PayBridge.Common.Grpc.FraudDetection.FraudDetecti
         });
 });
 
+var providerBaseUrl = builder.Configuration["Services:Provider:BaseUrl"]
+                       ?? "http://localhost:5003";
+
+builder.Services.AddHttpClient("provider", client =>
+{
+    client.BaseAddress = new Uri(providerBaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
+
 // === Health checks ===
 builder.Services.AddHealthChecks()
     // Postgres = critical: if it's down, we cannot fulfil the contract

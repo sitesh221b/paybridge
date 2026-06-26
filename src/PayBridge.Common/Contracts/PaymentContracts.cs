@@ -19,3 +19,23 @@ public record CreatePaymentResponse(
     PaymentStatus Status,
     DateTime CreatedAt
 );
+
+public record SubmitToProviderRequest(
+    Guid PaymentId,
+    decimal Amount,
+    string Currency,
+    PaymentMethod Method,
+    string WebhookUrl
+);
+
+public record SubmitToProviderResponse(
+    string ProviderTransactionId,
+    string Status  // "ACCEPTED" — final status comes via webhook
+);
+
+public record ProviderWebhookCallback(
+    string ProviderTransactionId,
+    string Status,  // "SUCCESS" | "FAILED"
+    DateTime Timestamp,
+    Dictionary<string, string> Metadata
+);

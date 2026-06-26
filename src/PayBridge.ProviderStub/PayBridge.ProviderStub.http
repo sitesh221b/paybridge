@@ -1,0 +1,6 @@
+@PayBridge.ProviderStub_HostAddress = http://localhost:5296
+
+GET {{PayBridge.ProviderStub_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
