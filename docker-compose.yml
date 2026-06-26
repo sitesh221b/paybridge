@@ -31,8 +31,8 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: paybridge-rabbitmq
     ports:
-      - "5672:5672" # AMQP protocol
-      - "15672:15672" # Management UI
+      - "5672:5672"
+      - "15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -45,10 +45,11 @@ services:
     environment:
       - DOTNET_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS=true
     ports:
-      - "18888:18888" # Dashboard UI
-      - "4317:18889" # OTLP/gRPC (apps inside the network use this)
+      - "18888:18888"
+      - "4317:18889"
 
   fraud-stub:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: src/PayBridge.FraudStub/Dockerfile
@@ -64,7 +65,24 @@ services:
       aspire-dashboard:
         condition: service_started
 
+  provider-stub:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: src/PayBridge.ProviderStub/Dockerfile
+    container_name: paybridge-provider-stub
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+    ports:
+      - "5003:8080"
+    depends_on:
+      aspire-dashboard:
+        condition: service_started
+
   payment-api:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: src/PayBridge.PaymentApi/Dockerfile
@@ -74,6 +92,12 @@ services:
       - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=paybridge;Username=paybridge;Password=paybridge_dev
       - ConnectionStrings__Redis=redis:6379
       - Services__FraudStub__BaseUrl=http://fraud-stub:8080
+      - Services__Provider__BaseUrl=http://provider-stub:8080
+      - WebhookBaseUrl=http://payment-api:8080
+      - RabbitMq__Host=rabbitmq
+      - RabbitMq__Port=5672
+      - RabbitMq__User=guest
+      - RabbitMq__Password=guest
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889
       - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
     ports:
@@ -83,8 +107,35 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
       fraud-stub:
         condition: service_started
+      provider-stub:
+        condition: service_started
+      aspire-dashboard:
+        condition: service_started
+
+  settlement-consumer:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: src/PayBridge.SettlementConsumer/Dockerfile
+    container_name: paybridge-settlement-consumer
+    environment:
+      - DOTNET_ENVIRONMENT=Production
+      - ConnectionStrings__Postgres=Host=postgres;Port=5432;Database=paybridge;Username=paybridge;Password=paybridge_dev
+      - RabbitMq__Host=rabbitmq
+      - RabbitMq__Port=5672
+      - RabbitMq__User=guest
+      - RabbitMq__Password=guest
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://aspire-dashboard:18889
+      - OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
       aspire-dashboard:
         condition: service_started
 

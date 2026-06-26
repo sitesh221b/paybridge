@@ -3,13 +3,13 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 COPY ["src/PayBridge.Common/PayBridge.Common.csproj", "src/PayBridge.Common/"]
-COPY ["src/PayBridge.FraudStub/PayBridge.FraudStub.csproj", "src/PayBridge.FraudStub/"]
-RUN dotnet restore "src/PayBridge.FraudStub/PayBridge.FraudStub.csproj"
+COPY ["src/PayBridge.ProviderStub/PayBridge.ProviderStub.csproj", "src/PayBridge.ProviderStub/"]
+RUN dotnet restore "src/PayBridge.ProviderStub/PayBridge.ProviderStub.csproj"
 
 COPY src/PayBridge.Common/ src/PayBridge.Common/
-COPY src/PayBridge.FraudStub/ src/PayBridge.FraudStub/
+COPY src/PayBridge.ProviderStub/ src/PayBridge.ProviderStub/
 
-RUN dotnet publish "src/PayBridge.FraudStub/PayBridge.FraudStub.csproj" \
+RUN dotnet publish "src/PayBridge.ProviderStub/PayBridge.ProviderStub.csproj" \
     -c Release \
     -o /app/publish \
     --no-restore \
@@ -25,4 +25,4 @@ EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
 
-ENTRYPOINT ["dotnet", "PayBridge.FraudStub.dll"]
+ENTRYPOINT ["dotnet", "PayBridge.ProviderStub.dll"]

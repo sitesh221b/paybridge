@@ -13,7 +13,7 @@ Content-Type: application/json
 
 {
   "merchantId": "merchant_acme",
-  "idempotencyKey": "queue-test-003",
+  "idempotencyKey": "docker-test-001",
   "amount": 49.99,
   "currency": "USD",
   "customerEmail": "[email protected]",
