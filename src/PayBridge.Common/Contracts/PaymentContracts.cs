@@ -39,3 +39,14 @@ public record ProviderWebhookCallback(
     DateTime Timestamp,
     Dictionary<string, string> Metadata
 );
+
+public record PaymentEvent(
+    Guid PaymentId,
+    string MerchantId,
+    string EventType,     // "PaymentCompleted" | "PaymentFailed"
+    decimal Amount,
+    string Currency,
+    string? ProviderTransactionId,
+    string? FailureReason,
+    DateTime Timestamp
+);

@@ -20,6 +20,7 @@ var otel = builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(ServiceName, serviceVersion: ServiceVersion));
 
 otel.WithTracing(t => t
+    .AddSource(PayBridge.PaymentApi.Observability.PaymentTracing.ActivitySourceName)
     .AddAspNetCoreInstrumentation()
     .AddHttpClientInstrumentation()
     .AddGrpcClientInstrumentation()
@@ -117,6 +118,16 @@ builder.Services.AddGrpcClient<PayBridge.Common.Grpc.FraudDetection.FraudDetecti
                 return ValueTask.CompletedTask;
             }
         });
+});
+
+// === RabbitMQ event publisher ===
+// Async init via factory; registered as singleton because connections are expensive.
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var logger = sp.GetRequiredService<ILogger<PayBridge.PaymentApi.Messaging.PaymentEventPublisher>>();
+    return PayBridge.PaymentApi.Messaging.PaymentEventPublisher.CreateAsync(config, logger)
+        .GetAwaiter().GetResult();
 });
 
 var providerBaseUrl = builder.Configuration["Services:Provider:BaseUrl"]

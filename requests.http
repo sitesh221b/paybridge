@@ -13,7 +13,7 @@ Content-Type: application/json
 
 {
   "merchantId": "merchant_acme",
-  "idempotencyKey": "fresh-test-002",
+  "idempotencyKey": "fresh-test-005",
   "amount": 49.99,
   "currency": "USD",
   "customerEmail": "[email protected]",
