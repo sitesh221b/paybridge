@@ -165,12 +165,30 @@ Try it: `docker compose stop redis` → `/health/ready` returns 200 with `Degrad
 dotnet test
 ```
 
-Integration tests boot Postgres + Redis containers via Testcontainers and
-exercise the payment pipeline against real infrastructure. Coverage is
-deliberately focused on the highest-leverage paths — happy-path persistence
-and idempotency under duplicate-key races. Broader coverage (status
-transitions, fraud rejection path, queue propagation contract tests) is the
-next investment.
+Coverage:
+
+- **Unit tests** for pure-logic pieces (validation predicates, PII redaction).
+  Fast, isolated, no external dependencies.
+- **Integration tests** against real Postgres and Redis via Testcontainers.
+  These are where the interesting bugs hide: idempotency under duplicate
+  keys, per-merchant key scoping, fraud-rejection persistence. The gRPC
+  fraud client and HTTP provider client are replaced with in-process
+  fakes — we test orchestration, not the external services themselves.
+
+**Why integration-heavy?** This service's primary value is correct
+orchestration of external systems. Most failure modes (idempotency races,
+EF schema/casing, traceparent header survival, resilience pipeline
+behavior) involve at least two components, so unit-testing the controller
+in isolation would mean asserting that mocks behave like mocks. The
+Testcontainers pattern gives near-unit-test speed (~5-10s per run after
+image caching) so the cost trade-off historically favoring unit tests
+has shifted.
+
+**Next investments** (out of scope for this submission):
+- Webhook idempotency under simulated duplicate provider delivery
+- End-to-end queue-propagation test (Testcontainers RabbitMQ + a real
+  Settlement Consumer in a sibling process)
+- Contract test for the provider HTTP integration
 
 ---
 
