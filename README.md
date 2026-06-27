@@ -27,7 +27,7 @@ Then:
 ```bash
   curl -X POST http://localhost:5001/api/payments \
     -H "Content-Type: application/json" \
-    -d '{"merchantId":"acme","idempotencyKey":"k1","amount":49.99,"currency":"USD","customerEmail":"[email protected]","method":"CreditCard","metadata":null}'
+    -d '{"merchantId":"acme","tenantId": "tenant_1","idempotencyKey":"k1","amount":49.99,"currency":"USD","customerEmail":"[email protected]","method":"CreditCard","metadata":null}'
 ```
 - **See the trace**: [http://localhost:18888](http://localhost:18888) → Traces
 - **See the queue**: [http://localhost:15672](http://localhost:15672) (guest / guest)
@@ -57,10 +57,10 @@ The system has two phases:
 
 2. **Async settlement path** (below the dashed boundary). Provider fires a
    webhook callback as a fresh HTTP request, with the trace context
-   deliberately severed in the provider stub to model real third-party
+   deliberately severed in the provider stub to model a real third-party
    behavior. The webhook handler creates a span with a link back to the
    original payment trace, then publishes a `PaymentEvent` to RabbitMQ. The
-   traceparent is manually injected into message headers so the Settlement
+   traceparent is manually injected into the message headers so the Settlement
    Consumer's span lands as a child of the publisher's span across the queue.
 
 ![Observability layer](docs/architecture-observability.png)
@@ -98,7 +98,7 @@ multi-backend routing) lives in the Collector config, not in app code.
 
 All services communicate over Docker's internal network. Telemetry flows
 app → Collector → Dashboard, so a reviewer can send one payment and watch
-a single trace span six protocol boundaries.
+a single trace spans six protocol boundaries.
 
 ---
 
@@ -174,7 +174,7 @@ inflate cost.
 How I drew the line:
 
 - Postgres down → 503. We're the system of record; without it we can't
-  fulfill our contract.
+  fulfil our contract.
 - RabbitMQ down → 503. We can't guarantee event publication.
 - Redis down → 200 Degraded. The DB unique constraint is the durable
   idempotency guarantee; Redis is a fast-path optimization. Falling back
@@ -243,7 +243,7 @@ docker compose stop fraud-stub
 for i in {1..6}; do
   curl -X POST http://localhost:5001/api/payments \
     -H "Content-Type: application/json" \
-    -d "{\"merchantId\":\"acme\",\"idempotencyKey\":\"brk-$i\",\"amount\":1,\"currency\":\"USD\",\"customerEmail\":\"[email protected]\",\"method\":\"CreditCard\",\"metadata\":null}"
+    -d "{\"merchantId\":\"acme\",\"tenantId\": \"tenant_1\",\"idempotencyKey\":\"brk-$i\",\"amount\":1,\"currency\":\"USD\",\"customerEmail\":\"[email protected]\",\"method\":\"CreditCard\",\"metadata\":null}"
 done
 ```
 
@@ -395,7 +395,7 @@ What I directed and verified rather than delegated:
   the provider stub's background task
 - Idempotency at three layers (cache fast path, DB durable check, unique
   constraint as the race-proof backstop)
-- Health check critical-vs-non-critical boundary
+- Health check critical vs non-critical boundary
 - SLO definitions and alerting strategy
 - PII handling model
 - Test coverage scope
