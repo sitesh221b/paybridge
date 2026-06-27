@@ -14,7 +14,7 @@ so it's easy to verify coverage section by section.
 **Requirements:** Docker Desktop with ≥6 GB RAM allocated.
 
 ```bash
-git clone <repo-url>
+git clone [https://github.com/sitesh221b/paybridge.git](https://github.com/sitesh221b/paybridge.git)
 cd paybridge
 docker compose up -d --build
 ```
