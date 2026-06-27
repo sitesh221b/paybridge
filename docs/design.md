@@ -1,203 +1,122 @@
 # PayBridge — Design Document
 
-## 1. Architecture overview
+## 1. Architecture
 
-PayBridge is decomposed into independently deployable services that
-communicate over the protocol most natural to each boundary: REST for the
-public merchant-facing API, gRPC for the internal fraud RPC, HTTP for the
-third-party provider integration, an HTTP webhook for the asynchronous
-provider callback, AMQP for downstream event distribution, and SQL for
-durable settlement persistence. The Payment API is the orchestrator and
-owns correctness — validation, idempotency, the status lifecycle, and
-the integrity guarantees that prevent double-charging under retry. The
-Settlement Consumer owns durable settlement persistence and is idempotent
-against duplicate delivery.
+PayBridge is a payment orchestrator split across four .NET services that
+talk to each other over the protocol that makes sense for each boundary —
+REST for the merchant API, gRPC for the internal fraud RPC, HTTP for the
+provider, HTTP webhook for the async callback, AMQP for the settlement
+event, and SQL for persistence.
 
-Two services (Fraud, Provider) are deliberate stubs — real containers
-returning random or scripted responses. The assignment explicitly allows
-this, and the observability story is the same regardless of business
-logic depth. The architecture choices that demonstrate seniority — trace
-propagation across protocol boundaries, idempotency design, resilience
-patterns, cost-aware observability — are the same in either case.
+The Payment API owns correctness — validation, idempotency, status
+transitions, the integrity guarantees that stop double-charging. The
+Settlement Consumer owns durable settlement and is idempotent against
+duplicate delivery so RabbitMQ's at-least-once semantics don't corrupt
+state. Fraud and Provider are stubs but run as real containers because the
+assignment is about the integration boundaries, not the business logic
+behind them.
 
-All services emit OTLP telemetry to an OpenTelemetry Collector that
-forwards to a backend (Aspire Dashboard for this submission). The
-Collector is an intentional layer: it concentrates telemetry policy
-(sampling, attribute scrubbing, multi-backend routing) so that apps stay
-dumb and policy can change without app redeploys. This is the
-production-shaped abstraction even when overkill for a take-home.
+All services emit OTLP to an OpenTelemetry Collector, which forwards to the
+Aspire Dashboard. The Collector isn't strictly needed for this demo — apps
+could export to the Dashboard directly — but having it in the path matches
+the production shape, where sampling and scrubbing live in one configurable
+layer instead of scattered through service code.
 
-## 2. Service Level Objectives
+See the README diagrams for the request lifecycle and the observability layer.
 
-Three SLOs cover the dimensions an on-call engineer cares about: can we
-serve traffic, are we serving it fast enough, and is the downstream
-settlement keeping up.
+## 2. SLOs
 
-### SLO 1 — Payment success rate (availability)
+Three SLOs, covering availability, latency, and downstream freshness.
 
-- **SLI**: `successful_payments / valid_payment_requests`. Source: the
-  `paybridge.payments.total` counter, filtered to exclude client 4xx.
-- **Target**: 99.9% over a rolling 30-day window. Error budget: 0.1% =
-  ~43 minutes of full-outage equivalent per month.
-- **Alerting**: multi-window burn-rate alert. Page when the 1-hour AND
-  6-hour burn rates both exceed 14.4× (fast burn — budget exhausted in
-  ~2 days if continued). Ticket on 6-hour burn alone (slow burn).
+**Payment success rate.** `successful_payments / valid_payment_requests`,
+excluding client 4xx. Target 99.9% over 30 days. Alert on a multi-window
+burn rate — page when both 1-hour and 6-hour burn rates exceed 14.4× (fast
+burn), ticket on 6-hour alone (slow burn). Two windows filters out
+single-request anomalies while catching real drops fast.
 
-### SLO 2 — End-to-end latency
+**End-to-end latency.** P99 of `paybridge.payments.duration`. Target P99
+under 2s, P50 under 300ms. Page when P99 exceeds 2s for 10 minutes
+straight. Histograms not averages because the tail is what users feel.
 
-- **SLI**: P99 of the `paybridge.payments.duration` histogram for
-  successful payments.
-- **Target**: P99 < 2 seconds, P50 < 300 ms.
-- **Alerting**: page when P99 exceeds 2s for 10 consecutive minutes. The
-  10-minute window prevents pager noise from single-request anomalies.
-
-### SLO 3 — Settlement freshness
-
-- **SLI**: time between `PaymentCompleted` event publication and the
-  settlement row appearing in Postgres. Source: difference between the
-  webhook handler's `payment.completed publish` span end-time and the
-  consumer's `INSERT INTO settlements` span end-time, surfaced as a
-  derived metric.
-- **Target**: 99% of settlements persisted within 60 seconds of the
-  triggering event.
-- **Alerting**: page when consumer lag exceeds threshold for 5 minutes;
-  also page on consumer process down.
+**Settlement freshness.** Time between the `PaymentCompleted` publish and
+the settlement row landing in Postgres. Target 99% within 60 seconds.
+Page when consumer lag exceeds threshold for 5 minutes, or if the consumer
+process dies.
 
 ## 3. Incident runbook — "payment success rate dropped"
 
-**Detection**: SLO 1 fast-burn alert fires.
+Alert fires. First five minutes:
 
-**Triage order:**
+1. Filter `paybridge.payments.total` by `status`, `method`, `currency`,
+   `merchant`. Is the drop scoped to one dimension or global?
+2. Check `paybridge.resilience.breaker_events`. Is the fraud breaker open?
+   That's the most common cause.
+3. Open a failing trace from the dashboard. The errored span names the
+   bad dependency.
+4. Filter Logs for `Level=Error` and check for recent deploys.
+5. `docker compose ps` — Postgres or RabbitMQ degraded?
 
-1. **Dashboard → Metrics → `paybridge.payments.total`**. Filter by `status`,
-   `method`, `currency`, `merchant`. Is the drop **scoped** to one
-   dimension (one merchant, one card type) or global? Scope determines
-   whether this is a customer issue, a partner issue, or a system issue.
-2. **Dashboard → Metrics → `paybridge.resilience.breaker_events`**. Is
-   the fraud breaker open? Most likely cause of a system-wide drop.
-3. **Dashboard → Traces, filter HTTP 5xx**. Click into a failing trace.
-   The span that errored will tell us which dependency is implicated.
-4. **Dashboard → Logs, filter Level=Error**. Correlate with recent
-   deploys, infra changes, breaker events.
-5. **`docker compose ps`**. Postgres or RabbitMQ degraded?
+Common causes, ranked by what I'd actually expect:
 
-**Likely root causes, in order of probability:**
+- **Fraud service degraded.** Breaker opens, payments fail with
+  `fraud_service_unavailable`. Our fail-closed posture is intentional;
+  flipping it to fail-open is a risk-team call, not an engineering one.
+- **Provider broken.** The failing trace shows the outbound HTTP call
+  failing. Reroute via merchant config if there's an alternate provider.
+- **Postgres saturation.** DB spans show high latency. Scale the pool,
+  find the slow query via `db.statement`, consider a read replica for
+  idempotency lookups.
+- **Bad deploy.** Error spike lines up with the deploy timestamp on the
+  dashboard — roll back.
+- **RabbitMQ down.** Payments still succeed synchronously, but settlement
+  freshness degrades. Restart the broker or fail over the cluster.
 
-- Fraud service is degraded → breaker is open → payments fail with
-  `fraud_service_unavailable`. Mitigation: confirm via fraud-stub
-  `/health/live`. If upstream-owned, escalate. Our fail-closed posture
-  is intentional — we don't process payments when fraud cannot be
-  evaluated. Switching to fail-open is a policy decision, not an
-  engineering one.
-- Provider integration broken → trace will show the provider HTTP call
-  failing. Mitigation: route to alternate provider (merchant config); if
-  no alternate, communicate maintenance window.
-- Postgres saturation → DB spans show high latency or timeouts.
-  Mitigation: scale connection pool; identify slow queries; consider
-  read replica for idempotency lookup path.
-- Bad deploy → error spike correlates with deploy time. Mitigation:
-  roll back.
-- RabbitMQ down → publishes fail; payments still succeed
-  synchronously but settlement freshness degrades. Mitigation: restart
-  broker; if cluster, fail over.
-
-**Verify recovery**: SLO burn rate returns below 1×. Sample traces
-through the dashboard. Write postmortem; add an alert or guardrail for
-the failure class that slipped through.
+Verify recovery by watching the burn rate come back below 1×, then write
+the postmortem and add a guardrail for whatever slipped through.
 
 ## 4. PII and data governance
 
-The service handles customer emails, payment amounts, and merchant
-identifiers. The model: minimize PII in telemetry, never log it, scrub
-on the way out as a defense in depth.
+Approach: minimize PII in telemetry, never log it, scrub on the way out.
 
-**Logs**: customer emails are never logged. Logged identifiers are
-business-safe — `MerchantId` (a business identifier, not a personal one)
-and `PaymentId` (a system identifier). Amounts are logged for
-business-observability reasons but are not personal data in isolation.
-Card data and CVV never enter the service — they go directly to providers,
-which keeps us out of PCI scope by design.
+Logs and trace attributes carry `MerchantId` and `PaymentId` — system
+identifiers, not personal data. Customer emails are never logged. Card
+data and CVV don't enter the service at all by design — providers handle
+them, which keeps us out of PCI scope. Metric labels are bounded
+categorical values; high-cardinality identifiers go on traces and logs
+where they can be queried, not on metrics where they'd blow up cost.
 
-**Traces**: span attributes follow the same rule. The
-`db.statement` attribute (the SQL EF Core executed) can contain
-parameter values. In production this would be scrubbed by a Collector
-attributes-processor for tables with sensitive columns. Same for any
-inbound webhook attributes.
+In production: TLS between services (plaintext here for the demo, called
+out explicitly), encrypted columns for sensitive fields, least-privilege
+DB roles, tenant-scoped queries. Telemetry retention is configured at the
+backend so policy can change centrally. Because PII doesn't land in
+telemetry, GDPR-style erasure is a Postgres operation only — no telemetry
+purge required, which was a deliberate consequence of the
+"don't log it" choice.
 
-**Metrics**: labels are bounded categorical values (status, method,
-currency, breaker transition state). High-cardinality identifiers
-(PaymentId, email, raw amount) are never used as labels — both for
-privacy and to prevent cardinality explosion that would inflate cost
-and make the metrics backend unstable.
+## 5. Cost at 1,000 payments/minute
 
-**At rest and in transit**: TLS between services in production (within
-the Docker network here, we use plaintext for simplicity — explicitly
-called out as a dev choice). Encrypted database columns for sensitive
-fields in production. Least-privilege DB roles. Tenant-scoped queries
-prevent cross-tenant data leakage.
+About 1.4M payments a day. "Trace and log everything at full fidelity" gets
+expensive fast. The levers, in rough order of impact:
 
-**Retention and right-to-erasure**: telemetry retention windows are
-configured at the backend, not in the apps, so policy can change
-centrally. Because PII does not land in logs, traces, or metrics,
-erasing a customer is a Postgres operation — no telemetry purge
-required.
+**Tail-based sampling at the Collector** is the big one. Keep 100% of error
+traces and slow traces (above P95). Sample 5–10% of successful, fast
+traces. The Collector decides after seeing the whole trace, so I never
+drop the interesting ones.
 
-## 5. Cost awareness at 1,000 payments/minute
+**Metric cardinality discipline** is the silent killer. The dominant cost
+driver in metrics backends is the number of unique time series, not data
+volume. Adding a single high-cardinality label can multiply cost by orders
+of magnitude — which is why every metric I emit has been audited for
+bounded labels.
 
-At ~1.4M payments per day, naive "trace and log everything at full
-fidelity" becomes uneconomic quickly. Levers, in order of impact:
+**Log volume** comes down to log levels and framework noise. INFO for
+lifecycle and decisions, DEBUG off in production, framework chatter
+(HttpClient, EF Core) dampened to Warning. Logs flow through the same OTLP
+pipeline as traces, so the Collector can sample them too.
 
-**Tail-based sampling at the Collector.** Keep 100% of error traces and
-slow traces (>P95 duration). Sample 5–10% of successful, fast traces.
-The Collector's tail-sampling processor decides after seeing all spans
-in a trace, so you never lose the interesting ones while drastically
-reducing the boring majority. Configured in
-`docker/otel-collector-config.yaml` in production.
+**Retention tiering** — hot/queryable for 7 days, cold/aggregate for 90,
+exemplars preserved at full fidelity for historical debugging.
 
-**Metric cardinality discipline.** Already enforced by design — labels
-are closed sets, never identifiers. The dominant cost driver in
-metrics backends is unique time series. Adding a single high-cardinality
-label can blow up the cost budget; that's why every metric we emit has
-been audited for label bounds.
-
-**Log levels.** INFO for lifecycle events and decisions; DEBUG
-suppressed in production. Framework log noise (HttpClient request
-start/end, EF Core SQL commands) is dampened to Warning by
-configuration. Logs flow through the same OTLP pipeline as traces, so
-the Collector can sample them too.
-
-**Retention tiering.** Hot storage (queryable in real-time) for 7 days;
-cold/aggregate for longer (90 days). Exemplar traces preserved at full
-fidelity in a separate tier so historical incident debugging stays
-possible.
-
-**The Collector as a cost-control point.** Filter, batch, drop, route —
-all centrally. The apps stay dumb and policy is tuneable without
-redeploys. Adding a new backend or changing sampling becomes a Collector
-config change.
-
-The trade-off is observability cost vs. debuggability: keep enough
-fidelity on errors and tails to debug incidents; sample the boring
-majority to control spend.
-
-## 6. Production extensions (out of scope here)
-
-- **Outbox pattern.** Avoid the dual-write inconsistency between
-  Postgres status update and RabbitMQ publish: write the event to an
-  `outbox` table inside the same database transaction as the status
-  update; a relay polls the outbox and publishes. Guarantees
-  "persisted ⇔ will-be-published" without a distributed transaction.
-- **Dead-letter queue + retry topology.** Failed consumer messages go
-  to a DLQ instead of the current `requeue: false` drop. DLQ depth is a
-  metric with an alert.
-- **Migration runner job.** Migrations on startup is fine for one
-  replica; for rolling deploys, a dedicated migration job in CI is the
-  production answer. `dotnet ef migrations bundle` produces a runnable
-  executable that can ship as a sidecar.
-- **Kill switch.** A config flag, hot-reloadable via `IOptionsMonitor`,
-  to disable payment processing without restart. Observable as a gauge.
-- **Multi-tenancy.** `TenantId` propagated through every entity, event,
-  and log line; per-tenant SLOs; per-tenant rate limits.
-- **Real fraud and provider integrations.** The stubs are scope-limited
-  but the integration boundaries (gRPC contract, HTTP webhook contract,
-  resilience pipeline) would not change.
+The honest trade-off is observability cost vs. debuggability: full fidelity
+on errors and tails to debug incidents fast, sample the rest to control
+spend. The Collector is where you adjust this knob without redeploying apps.
