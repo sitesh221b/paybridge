@@ -24,15 +24,13 @@ namespace PayBridge.PaymentApi.Tests.IntegrationTests;
 /// </summary>
 public class PaymentApiIntegrationTests : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17-alpine")
         .WithDatabase("paybridge_test")
         .WithUsername("test")
         .WithPassword("test")
         .Build();
 
-    private readonly RedisContainer _redis = new RedisBuilder()
-        .WithImage("redis:7-alpine")
+    private readonly RedisContainer _redis = new RedisBuilder("redis:7-alpine")
         .Build();
 
     private WebApplicationFactory<Program> _factory = default!;
@@ -102,7 +100,7 @@ public class PaymentApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task POST_payments_persists_to_database()
     {
-        var req = SamplePayment("merchant-1", "happy-001");
+        var req = SamplePayment("merchant-1", "happy-001", "tenant-1");
 
         var resp = await _client.PostAsJsonAsync("/api/payments", req);
 
@@ -123,7 +121,7 @@ public class PaymentApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Duplicate_idempotency_key_returns_original_payment()
     {
-        var req = SamplePayment("merchant-1", "dup-001");
+        var req = SamplePayment("merchant-1", "dup-001", "tenant-1");
 
         var first = await _client.PostAsJsonAsync("/api/payments", req);
         var firstBody = await first.Content.ReadFromJsonAsync<CreatePaymentResponse>(JsonOpts);
@@ -148,8 +146,8 @@ public class PaymentApiIntegrationTests : IAsyncLifetime
         // Idempotency is scoped per-merchant: (merchant_id, idempotency_key) is the key,
         // not idempotency_key alone. Two different merchants reusing the same key must
         // produce two separate payments.
-        var reqA = SamplePayment("merchant-a", "shared-key");
-        var reqB = SamplePayment("merchant-b", "shared-key");
+        var reqA = SamplePayment("merchant-a", "shared-key", "tenant-a");
+        var reqB = SamplePayment("merchant-b", "shared-key", "tenant-b");
 
         var respA = await _client.PostAsJsonAsync("/api/payments", reqA);
         var respB = await _client.PostAsJsonAsync("/api/payments", reqB);
@@ -163,6 +161,28 @@ public class PaymentApiIntegrationTests : IAsyncLifetime
         var db = scope.ServiceProvider.GetRequiredService<PaymentDbContext>();
         var rows = await db.Payments.CountAsync(p => p.IdempotencyKey == "shared-key");
         rows.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Same_idempotency_and_merchant_across_tenants_creates_distinct_payments()
+    {
+        // Idempotency is scoped per (tenant, merchant) — two tenants happening to share
+        // the same merchant ID and idempotency key must produce two separate payments.
+        var reqA = SamplePayment("merchant-shared", "shared-key", "tenant-a");
+        var reqB = SamplePayment("merchant-shared", "shared-key", "tenant-b");
+
+        var respA = await _client.PostAsJsonAsync("/api/payments", reqA, JsonOpts);
+        var respB = await _client.PostAsJsonAsync("/api/payments", reqB, JsonOpts);
+
+        var bodyA = await respA.Content.ReadFromJsonAsync<CreatePaymentResponse>(JsonOpts);
+        var bodyB = await respB.Content.ReadFromJsonAsync<CreatePaymentResponse>(JsonOpts);
+
+        bodyA!.PaymentId.Should().NotBe(bodyB!.PaymentId);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PaymentDbContext>();
+        var count = await db.Payments.CountAsync(p => p.IdempotencyKey == "shared-key");
+        count.Should().Be(2);
     }
 
     [Fact]
@@ -180,7 +200,7 @@ public class PaymentApiIntegrationTests : IAsyncLifetime
         });
         using var client = rejectingFactory.CreateClient();
 
-        var req = SamplePayment("merchant-1", "rejected-001");
+        var req = SamplePayment("merchant-1", "rejected-001", "tenant-1");
         var resp = await client.PostAsJsonAsync("/api/payments", req);
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);  // Ok, not Accepted — rejected, not submitted.
@@ -194,8 +214,8 @@ public class PaymentApiIntegrationTests : IAsyncLifetime
         stored.FailureReason.Should().NotBeNullOrEmpty();
     }
 
-    private static CreatePaymentRequest SamplePayment(string merchant, string idempotencyKey) =>
-        new(merchant, idempotencyKey, 49.99m, "USD", "[email protected]",
+    private static CreatePaymentRequest SamplePayment(string merchant, string idempotencyKey, string tenantId) =>
+        new(merchant, tenantId, idempotencyKey, 49.99m, "USD", "[email protected]",
             PaymentMethod.CreditCard, null);
 }
 

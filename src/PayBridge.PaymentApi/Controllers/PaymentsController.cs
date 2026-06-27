@@ -47,6 +47,8 @@ public class PaymentsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.MerchantId))
             return BadRequest(new { error = "merchantId is required" });
+        if (string.IsNullOrWhiteSpace(request.TenantId))
+            return BadRequest(new { error = "tenantId is required" });
         if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
             return BadRequest(new { error = "idempotencyKey is required" });
         if (request.Amount <= 0)
@@ -57,7 +59,7 @@ public class PaymentsController : ControllerBase
 
         // === Idempotency: Redis fast path ===
         var cache = _redis.GetDatabase();
-        var idempotencyCacheKey = $"idem:{request.MerchantId}:{request.IdempotencyKey}";
+        var idempotencyCacheKey = $"idem:{request.TenantId}:{request.MerchantId}:{request.IdempotencyKey}";
         var cached = await cache.StringGetAsync(idempotencyCacheKey);
         if (cached.HasValue)
         {
@@ -79,7 +81,8 @@ public class PaymentsController : ControllerBase
         var dbExisting = await _db.Payments
             .AsNoTracking()
             .FirstOrDefaultAsync(
-                p => p.MerchantId == request.MerchantId
+                p => p.TenantId == request.TenantId
+                  && p.MerchantId == request.MerchantId
                   && p.IdempotencyKey == request.IdempotencyKey, ct);
 
         if (dbExisting is not null)
@@ -96,6 +99,7 @@ public class PaymentsController : ControllerBase
         {
             Id = Guid.NewGuid(),
             MerchantId = request.MerchantId,
+            TenantId = request.TenantId,
             IdempotencyKey = request.IdempotencyKey,
             Amount = request.Amount,
             Currency = request.Currency,
@@ -121,7 +125,8 @@ public class PaymentsController : ControllerBase
             var winner = await _db.Payments
                 .AsNoTracking()
                 .FirstAsync(
-                    p => p.MerchantId == request.MerchantId
+                    p => p.TenantId == request.TenantId
+                      && p.MerchantId == request.MerchantId
                       && p.IdempotencyKey == request.IdempotencyKey, ct);
 
             await cache.StringSetAsync(idempotencyCacheKey, winner.Id.ToString(), IdempotencyTtl);
@@ -133,8 +138,8 @@ public class PaymentsController : ControllerBase
         await cache.StringSetAsync(idempotencyCacheKey, payment.Id.ToString(), IdempotencyTtl);
 
         _logger.LogInformation(
-            "Payment created. PaymentId={PaymentId} MerchantId={MerchantId} Amount={Amount} Currency={Currency}",
-            payment.Id, payment.MerchantId, payment.Amount, payment.Currency);
+            "Payment created. PaymentId={PaymentId} TenantId={TenantId} MerchantId={MerchantId} Amount={Amount} Currency={Currency}",
+            payment.Id, payment.TenantId, payment.MerchantId, payment.Amount, payment.Currency);
 
         // === Fraud check ===
         PayBridge.Common.Grpc.FraudCheckResponse fraudResp;
@@ -144,6 +149,7 @@ public class PaymentsController : ControllerBase
                 new PayBridge.Common.Grpc.FraudCheckRequest
                 {
                     PaymentId = payment.Id.ToString(),
+                    TenantId = payment.TenantId,
                     MerchantId = payment.MerchantId,
                     Amount = (double)payment.Amount,
                     Currency = payment.Currency,

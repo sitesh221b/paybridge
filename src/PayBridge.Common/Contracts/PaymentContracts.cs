@@ -6,6 +6,7 @@ public enum PaymentStatus { Created, FraudChecking, Submitted, Completed, Failed
 
 public record CreatePaymentRequest(
     string MerchantId,
+    string TenantId,
     string IdempotencyKey,
     decimal Amount,
     string Currency,
@@ -43,6 +44,7 @@ public record ProviderWebhookCallback(
 public record PaymentEvent(
     Guid PaymentId,
     string MerchantId,
+    string TenantId,
     string EventType,     // "PaymentCompleted" | "PaymentFailed"
     decimal Amount,
     string Currency,

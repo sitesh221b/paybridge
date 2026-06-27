@@ -4,6 +4,7 @@ Content-Type: application/json
 
 {
   "merchantId": "merchant_acme",
+  "tenantId": "tenant_1",
   "idempotencyKey": "demo-happy-001",
   "amount": 49.99,
   "currency": "USD",
@@ -18,6 +19,7 @@ Content-Type: application/json
 
 {
   "merchantId": "merchant_acme",
+  "tenantId": "tenant_1",
   "idempotencyKey": "demo-happy-001",
   "amount": 49.99,
   "currency": "USD",
@@ -26,12 +28,13 @@ Content-Type: application/json
   "metadata": null
 }
 
-### 3. Different merchant, same key — should be NEW payment (idempotency is per-merchant)
+### 3. Different merchant, same key — should be NEW payment
 POST http://localhost:5001/api/payments
 Content-Type: application/json
 
 {
   "merchantId": "merchant_globex",
+  "tenantId": "tenant_1",
   "idempotencyKey": "demo-happy-001",
   "amount": 19.99,
   "currency": "EUR",

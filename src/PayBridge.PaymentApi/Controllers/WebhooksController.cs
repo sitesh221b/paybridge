@@ -104,6 +104,7 @@ public class WebhooksController : ControllerBase
         await _publisher.PublishAsync(new PaymentEvent(
             PaymentId: payment.Id,
             MerchantId: payment.MerchantId,
+            TenantId: payment.TenantId,
             EventType: payment.Status == PaymentStatus.Completed ? "PaymentCompleted" : "PaymentFailed",
             Amount: payment.Amount,
             Currency: payment.Currency,

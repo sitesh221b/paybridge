@@ -3,7 +3,6 @@
 **/.vs
 **/.idea
 **/.vscode
-**/Migrations/*.Designer.cs
 **/node_modules
 .git
 .gitignore

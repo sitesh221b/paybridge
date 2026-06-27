@@ -14,6 +14,7 @@ public class SettlementDbContext : DbContext
         {
             e.HasKey(s => s.Id);
             e.Property(s => s.MerchantId).HasMaxLength(64).IsRequired();
+            e.Property(s => s.TenantId).HasMaxLength(64).IsRequired();
             e.Property(s => s.Currency).HasMaxLength(3).IsRequired();
             e.Property(s => s.Amount).HasPrecision(18, 2);
             e.Property(s => s.FinalStatus).HasConversion<string>().HasMaxLength(32);

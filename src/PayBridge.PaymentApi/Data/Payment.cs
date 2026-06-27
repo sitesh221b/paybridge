@@ -6,6 +6,7 @@ public class Payment
 {
     public Guid Id { get; set; }
     public string MerchantId { get; set; } = default!;
+    public string TenantId { get; set; } = default!;
     public string IdempotencyKey { get; set; } = default!;
     public decimal Amount { get; set; }
     public string Currency { get; set; } = default!;

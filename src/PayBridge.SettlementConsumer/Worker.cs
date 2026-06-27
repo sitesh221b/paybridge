@@ -108,6 +108,7 @@ public class SettlementWorker : BackgroundService
 
             activity?.SetTag("payment.id", evt.PaymentId.ToString());
             activity?.SetTag("payment.merchant_id", evt.MerchantId);
+            activity?.SetTag("payment.tenant_id", evt.TenantId);
             activity?.SetTag("event.type", evt.EventType);
 
             await PersistSettlementAsync(evt);
@@ -141,6 +142,7 @@ public class SettlementWorker : BackgroundService
         {
             PaymentId = evt.PaymentId,
             MerchantId = evt.MerchantId,
+            TenantId = evt.TenantId,
             Amount = evt.Amount,
             Currency = evt.Currency,
             FinalStatus = evt.EventType == "PaymentCompleted"

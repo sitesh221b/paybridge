@@ -11,10 +11,11 @@ service FraudDetection {
 message FraudCheckRequest {
   string payment_id = 1;
   string merchant_id = 2;
-  double amount = 3;
-  string currency = 4;
-  string customer_email = 5;
-  string payment_method = 6;
+  string tenant_id = 3;
+  double amount = 4;
+  string currency = 5;
+  string customer_email = 6;
+  string payment_method = 7;
 }
 
 message FraudCheckResponse {

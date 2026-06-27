@@ -14,6 +14,7 @@ public class PaymentDbContext : DbContext
         {
             e.HasKey(p => p.Id);
             e.Property(p => p.MerchantId).HasMaxLength(64).IsRequired();
+            e.Property(p => p.TenantId).HasMaxLength(64).IsRequired();
             e.Property(p => p.IdempotencyKey).HasMaxLength(128).IsRequired();
             e.Property(p => p.Currency).HasMaxLength(3).IsRequired();
             e.Property(p => p.Amount).HasPrecision(18, 2);
@@ -25,7 +26,7 @@ public class PaymentDbContext : DbContext
 
             // THE idempotency guarantee: durable, enforced by Postgres.
             // Cache can be lost; this constraint cannot be bypassed.
-            e.HasIndex(p => new { p.MerchantId, p.IdempotencyKey })
+            e.HasIndex(p => new { p.TenantId,p.MerchantId, p.IdempotencyKey })
              .IsUnique()
              .HasDatabaseName("ux_payments_merchant_idempotency");
         });
