@@ -210,3 +210,7 @@ static Task WriteHealthJson(HttpContext ctx, HealthReport report)
     };
     return ctx.Response.WriteAsJsonAsync(payload);
 }
+
+// Marker partial class so the test project can reference Program
+// for WebApplicationFactory<Program>.
+public partial class Program { }
